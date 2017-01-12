@@ -1,0 +1,123 @@
+---
+title: "A prediction model to measure excersise quality with accelerometers"
+author: "Johanna Griebel"
+date: "9 Januar 2017"
+output: html_document
+---
+
+#Summary
+
+New device that collect large amount of data about personal activity conquer the fitness market. Most of these devices mainly measure the quantity of activity but not the quality of how exercises are done. In this report date from accelerometers on the belt, forearm, arm and dumbell of 6 participents which performed barbell lifts correctly and incorrectly in 5 different ways were used to find a prediction model for the quality of the excersise. The model obtained by random forest could predict the 6 different ways of performing the excersise with a accuracy of about 99%. 
+
+
+#Data and Preprocessing
+First packages needed for the analysis were downloaded:
+```{r, warning=FALSE, results="hide", message=FALSE}
+library(caret)
+library(randomForest)
+library(rattle)
+library(rpart)
+library(gbm)
+```
+Training data was downloaded from [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and testing data from [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv).
+The data has been provided by http://groupware.les.inf.puc-rio.br/har, where one can find the description about the experimental design for free (Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013)
+
+##Download data
+```{r, cache=TRUE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="trainingactivity.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="testingactivity.csv")
+trainingactivity<-read.csv("trainingactivity.csv")
+testingactivity<-read.csv("testingactivity.csv")
+```
+##Preprocessing
+Because missing data can influence the model all columns with missing data were deleted from the training data set: 
+```{r, cache=TRUE}
+isNA <- apply(trainingactivity, 2, function(x) { sum(is.na(x)) })
+trainingactivity <- subset(trainingactivity[, which(isNA == 0)])
+```
+Furthermore, columns which do not provide information on the quality of excersise were deleted:
+```{r, cache=TRUE}
+trainingactivity <- subset(trainingactivity, select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, 
+                              raw_timestamp_part_2, cvtd_timestamp))
+```
+Additional, variables with variance close to zero were deleted from the data set to minimize their number (and get higher speed of the model analysis):
+```{r, cache=TRUE}
+zeroVar= nearZeroVar(trainingactivity, saveMetrics = TRUE)
+trainingtidy = trainingactivity[,zeroVar[, 'nzv']==0]
+```
+Also correlation between the predictor variables were caculated and if they are higher than .8 variables were deleted from the data set (correlation between predictor variables can influence the variance of the model):
+```{r,  results="hide"}
+corrmatrix <- cor(na.omit(trainingtidy[sapply(trainingtidy, is.numeric)]))
+removecor = findCorrelation(corrmatrix, cutoff = .80, verbose = TRUE)
+trainingtidy = trainingtidy[,-removecor]
+```
+This ended in 19622 observation of 40 variables.
+```{r}
+dim(trainingtidy)
+```
+In the end the provided training set was split into training data set (for model optimation) and test set (model evaluation):
+```{r}
+set.seed(123456)
+tab<-createDataPartition(y=trainingtidy$classe, p=0.7, list=FALSE)
+training<-trainingtidy[tab,]
+testing<-trainingtidy[-tab,]
+```
+#Model developing
+Because the outcome variable is categorial a simple tree based model has been applied to the data first. This decision also avoids the problematic of non-linear and non-parametric data: 
+```{r, cache=TRUE}
+mod_tree <- train(classe ~ ., data = training, method = "rpart")
+```
+The decision tree was plotted:
+```{r}
+fancyRpartPlot(mod_tree$finalModel)
+```
+
+To evaluate the accuracy of the model the tested:
+```{r}
+predicttree <- predict(mod_tree, newdata=training)
+confusionMat <- confusionMatrix(predicttree, training$classe)
+confusionMat
+```
+
+Because Accuracy of the simple tree based model was low with about 50% (CI 95%: 0.48,0.5), further algorithm have been tested.
+First, random forest, where bootstrapping is used and the best tree evaluated:
+```{r, cache=TRUE}
+mod_rf <- train(classe ~ ., data = training, method = "rf")
+```
+```{r}
+predictrf <- predict(mod_rf, newdata=training)
+confusionMat <- confusionMatrix(predictrf, training$classe)
+confusionMat
+```
+Second, the boosting algorithm was used, where weak predictor are added up to one classificator:
+```{r, cache=TRUE, results="hide"}
+mod_gbm <- train(classe ~ ., data = training, method = "gbm")
+```
+```{r}
+predictgbm <- predict(mod_gbm, newdata=training)
+confusionMat <- confusionMatrix(predictgbm, training$classe)
+confusionMat
+```
+
+The random forest algorithm resulted in a 100% accuracy (CI 95%: 99%,100%) compared to the Boosting Algorithm wit a accuracy of 96% (CI 95%: 96,2%, 96.8%) . 
+Therefore the final model has been choosen from the random forest alogrithm as it performed best. To evaluate the out of sample error (avoid an overfitted model) the final model was checked for accuracy with the testing data set:
+```{r}
+mod_final<-predict(mod_rf, newdata=testing)
+confusionMat<-confusionMatrix(mod_final, testing$classe)
+confusionMat
+```
+
+The model obtained by random forest showed a accurcy of 99% (CI 95%: 98%, 99%), which is very high. Therefore the this model was used for the prediction of the test data set for the final quiz.
+First the same Preprocessing as for the training data set was performed on the testing data set: 
+```{r}
+testingactivity <- subset(testingactivity[, which(isNA == 0)])
+testingactivity <- subset(testingactivity, select=-c(X, user_name, new_window, num_window, raw_timestamp_part_1, 
+                              raw_timestamp_part_2, cvtd_timestamp))
+testingtidy = testingactivity[,zeroVar[, 'nzv']==0]
+testingtidy = testingtidy[,-removecor]
+```
+Then the classes were predicted:
+```{r}
+prediction_testing<-predict(mod_rf, newdata=testingtidy)
+prediction_testing
+```
